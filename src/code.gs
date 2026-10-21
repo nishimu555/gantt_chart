@@ -16,7 +16,7 @@
  * 描画は index.html（ブラウザ側）で行い、スライドには1枚1画像として貼り付けます。
  */
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.0.0';
 const SHEET_TASKS = 'タスク';
 const SHEET_SPRINTS = 'スプリント';
 const SHEET_SETTINGS = '設定';
