@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<!--
+  ガントチャート Web表示 ＆ Googleスライド出力（画面・描画）
+  バージョン: 1.4.0
+
+  変更履歴
+  1.4.0 (2026-10-22)
+    - 設定「進捗を表示」を追加。「しない」にすると進捗列を消し、バーはすべて塗りつぶし（100%と同じ表示）
+  1.3.1 (2026-10-22)
+    - 設定シートの「基準日」が空のときは、本日線・本日の週の強調・現在の工程の強調・基準日の表示を出さないように変更
+      （「本日」ラベルの段も詰める）
+  1.3.0 (2026-10-22)
+    - 全体表示・別タブで見出し部分（本日・期間行・月・日付）を固定（縦スクロールしても上に残る）
+      表示枠を画面の高さに合わせ、枠の中で縦横にスクロールする方式に変更
+  1.2.5 (2026-10-22)
+    - 変更なし（Code.gs のメニュー整理に合わせてバージョンをそろえた）
+  1.2.4 (2026-10-21)
+    - 本日線が月・日付のラベルに重なる問題を修正（月・日付の行には線を引かない）
+    - 枠に名前が入らない短い期間は、枠の横に名前を表示するように修正
+  1.2.3 (2026-10-21)
+    - 凡例の「現在のスプリント」を「現在の工程」に変更（スクラム以外でも使えるように）
+  1.2.2 (2026-10-21)
+    - 別タブでも文字サイズ（小／標準／大／特大）を切り替えられるようにした
+    - 文字サイズの初期表示を「標準」に変更（画面・別タブとも）
+  1.2.1 (2026-10-21)
+    - 「別タブで開く」をWebアプリのURLを使わない方式に変更（表示中のガントチャートを新しいタブに描画）
+      ※複数アカウントでログインしているとWebアプリが開けない問題への対策
+  1.2.0 (2026-10-21)
+    - スプリント行を汎用の「期間」行に拡張（表示名を自由入力、見出しを設定で変更可、範囲内に期間がなければ行を出さない）
+    - Web表示：進捗列までを列固定（横スクロールしても左の表が残る）
+    - Web表示：文字サイズ「小」を追加
+    - ダイアログに「別タブで開く」ボタンを追加
+  1.1.0 (2026-10-21)
+    - スライド出力の文字を約1.5倍に拡大
+    - スライドの行の高さをページごとに自動調整し、下の余白を削減
+    - ページ番号を削除
+    - 基準日を右寄せで表示
+    - 機密表示（CONFIDENTIAL）を追加
+    - 最上段にスプリント行を追加（「スプリント」シートから読込、現在のスプリントを強調、境界線を表示）
+    - 画面表示の改善：等倍表示＋横スクロール、文字サイズ切替（標準／大／特大）、本日の週を薄く強調
+  1.0.0 (2026-10-21)
+    - 初版
+-->
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F1F5F9; color: #1F2937; font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif; }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 20px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; }
+  .bar h1 { margin: 0; font-size: 19px; color: #0F172A; }
+  .bar .conf { font-size: 11px; font-weight: 700; color: #B91C1C; letter-spacing: .04em; margin-top: 2px; }
+  .right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .base { font-size: 13px; color: #334155; text-align: right; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+  button { font: inherit; font-size: 13px; border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid #CBD5E1; background: #FFFFFF; color: #334155; min-height: 38px; }
+  button:hover { background: #F8FAFC; }
+  button:disabled { opacity: .5; cursor: default; }
+  .seg { display: inline-flex; border: 1px solid #CBD5E1; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button[aria-pressed="true"] { background: #1E293B; color: #FFFFFF; }
+  .seg .lab { display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: #64748B; background: #F8FAFC; border-right: 1px solid #CBD5E1; }
+  .primary { background: #1D4ED8; border-color: #1D4ED8; color: #FFFFFF; font-weight: 700; }
+  .primary:hover { background: #1E40AF; }
+  .status { margin: 12px 20px 0; padding: 10px 14px; border-radius: 8px; background: #EFF6FF; color: #1E3A8A; font-size: 13px; }
+  .status.err { background: #FEF2F2; color: #991B1B; }
+  .status a { color: #1D4ED8; font-weight: 700; }
+  .warn { margin: 12px 20px 0; padding: 10px 14px 10px 32px; border-radius: 8px; background: #FFFBEB; color: #92400E; font-size: 12px; }
+  main { padding: 16px 20px 24px; }
+  .sheet { background: #FFFFFF; border-radius: 10px; box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 0 0 1px #E2E8F0; padding: 8px; margin-bottom: 20px; overflow-x: auto; }
+  .sheet canvas { display: block; }
+  .sheet.scroll { padding: 0; overflow: auto; }
+  .stack { display: grid; }
+  .stack > canvas { grid-area: 1 / 1; }
+  .stack > .frozen { position: sticky; left: 0; z-index: 1; align-self: start; box-shadow: 6px 0 6px -4px rgba(15,23,42,.18); }
+  .stack > .head { position: sticky; top: 0; z-index: 2; align-self: start; box-shadow: 0 6px 6px -4px rgba(15,23,42,.18); }
+  .stack > .corner { position: sticky; top: 0; left: 0; z-index: 3; align-self: start; }
+  .sheet.fit canvas { width: 100%; height: auto; }
+  .pageLabel { font-size: 12px; color: #64748B; margin: 0 0 6px 4px; }
+  .empty { padding: 40px; text-align: center; color: #64748B; }
+  footer { padding: 0 20px 20px; font-size: 11px; color: #94A3B8; text-align: right; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div>
+    <h1 id="pj">ガントチャート</h1>
+    <div class="conf" id="conf"></div>
+  </div>
+  <div class="right">
+    <div class="base" id="base">読み込み中…</div>
+    <div class="actions">
+      <div class="seg" role="group" aria-label="表示切替">
+        <button id="tabAll" aria-pressed="true">全体表示</button>
+        <button id="tabPages" aria-pressed="false">スライドプレビュー</button>
+      </div>
+      <div class="seg" role="group" aria-label="文字サイズ">
+        <span class="lab">文字</span>
+        <button data-fs="0.85" aria-pressed="false">小</button>
+        <button data-fs="1" aria-pressed="true">標準</button>
+        <button data-fs="1.2" aria-pressed="false">大</button>
+        <button data-fs="1.4" aria-pressed="false">特大</button>
+      </div>
+      <button id="reload">再読み込み</button>
+      <button id="openTab" hidden>別タブで開く</button>
+      <button id="export" class="primary" disabled>Googleスライドに出力</button>
+    </div>
+  </div>
+</header>
+<div id="status" class="status" hidden></div>
+<ul id="warn" class="warn" hidden></ul>
+<main id="view"></main>
+<footer id="ver"></footer>
+
+<script>
+const APP_VERSION = '1.4.0';
+const CONTEXT = '<?= context ?>';   // 'web'（Webアプリ）または 'dialog'（スプレッドシートのダイアログ）
+
+/* ===================== 設定値 ===================== */
+const FONT = "'Noto Sans JP','Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif";
+const PALETTE = [
+  ['#2563EB', '#EFF5FF'], ['#0F766E', '#EDFAF7'], ['#4F46E5', '#F1F2FE'], ['#B45309', '#FEF7EC'],
+  ['#7C3AED', '#F5F1FE'], ['#BE185D', '#FDF0F6'], ['#0369A1', '#EEF7FC'], ['#4D7C0F', '#F3F8EC']
+];
+// スライド用画像：16:9スライドの「タイトルと注記を除いた領域」とほぼ同じ比率。fs は文字の拡大率
+const SLIDE = { W: 1360, H: 684, fs: 1.5, scale: 2 };
+const C = {
+  text: '#1F2937', sub: '#475569', muted: '#64748B', grid: '#EEF1F5', rule: '#CBD5E1', shade: '#F8FAFC',
+  link: '#64748B', today: '#DC2626', todayWeek: '#FEF2F2', done: '#15803D',
+  sprintA: '#E2E8F0', sprintB: '#F1F5F9', sprintNow: '#1E293B', sprintLine: '#94A3B8'
+};
+
+let DATA = null, GROUPS = [], RANGE = null, PERIODS = [];
+let mode = 'all', viewFs = 1;   // 文字サイズの初期値＝標準
+
+/* ===================== 日付 ===================== */
+const toD = s => { const p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); };
+const diffDays = (a, b) => Math.round((b - a) / 86400000);
+const md = s => { const p = s.split('-').map(Number); return p[1] + '/' + p[2]; };
+/** ファイル名用の日付（基準日が空なら作成日） */
+const fileDate = s => {
+  if (s) return s.replace(/-/g, '');
+  const d = new Date();
+  return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+};
+const jpDate = s => { const p = s.split('-').map(Number); return p[0] + '年' + p[1] + '月' + p[2] + '日'; };
+
+/* ===================== データ整形 ===================== */
+function buildGroups(tasks) {
+  const map = new Map();
+  tasks.forEach(t => { if (!map.has(t.group)) map.set(t.group, []); map.get(t.group).push(t); });
+  let i = 0;
+  return [...map].map(([name, ts]) => {
+    const c = PALETTE[i++ % PALETTE.length];
+    return { name, color: c[0], light: c[1], tasks: ts };
+  });
+}
+
+/** 期間：最初の作業の週の月曜〜最後の作業の週の日曜（1列＝1週） */
+function buildRange(tasks) {
+  let min = tasks[0].s, max = tasks[0].e;
+  tasks.forEach(t => { if (t.s < min) min = t.s; if (t.e > max) max = t.e; });
+  const start = toD(min); start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const end = toD(max); end.setDate(end.getDate() + (6 - (end.getDay() + 6) % 7));
+  return { start, weeks: Math.ceil((diffDays(start, end) + 1) / 7) };
+}
+
+/** レイアウト（列位置・縦位置）。fs＝文字の拡大率 */
+function makeLayout(fs, W, H, lanes, noToday, hideProg) {
+  const s = v => v * fs;
+  const L = { fs, s, W, H };
+  L.colId = 16;
+  L.colName = 16 + s(48);   L.nameW = s(150);
+  L.colWho = L.colName + L.nameW + s(8); L.whoW = s(46);
+  L.colPeriod = L.colWho + L.whoW + s(6);
+  L.showProg = !hideProg;   // 進捗列を出すか（設定「進捗を表示」）
+  L.progR = L.colPeriod + (L.showProg ? s(98) : s(66));
+  L.X0 = L.progR + s(12);  L.XR = W - 16;
+  L.pillY = 6;             L.pillH = noToday ? 0 : s(18);   // 基準日が空なら「本日」ラベルの段を詰める
+  L.sprintY = L.pillY + L.pillH + (noToday ? 0 : s(6));
+  L.laneH = s(20); L.laneGap = s(3); L.lanes = lanes || 0;
+  L.sprintH = L.lanes ? L.lanes * L.laneH + (L.lanes - 1) * L.laneGap : 0;
+  L.monthY = L.sprintY + L.sprintH + (L.lanes ? s(4) : 0);
+  L.weekY = L.monthY + s(20);
+  L.lineY = L.weekY + s(22);
+  L.bodyY = L.lineY + s(6);
+  L.legendH = s(34);
+  return L;
+}
+
+function makeAxis(range, L) {
+  const pxd = (L.XR - L.X0) / (range.weeks * 7);
+  return { start: range.start, weeks: range.weeks, pxd, x: d => L.X0 + diffDays(range.start, toD(d)) * pxd };
+}
+
+/** 改ページ：分類の途中では切らない。1分類が1ページに収まらない場合のみ分割して「（続き）」 */
+function paginate(groups, maxLines) {
+  const pages = [];
+  let cur = [], used = 0;
+  const flush = () => { if (cur.length) pages.push(cur); cur = []; used = 0; };
+  groups.forEach(g => {
+    const need = 1 + g.tasks.length;
+    if (need <= maxLines) {
+      if (used + need > maxLines) flush();
+      cur.push(g); used += need;
+      return;
+    }
+    const rest = g.tasks.slice();
+    let first = true;
+    while (rest.length) {
+      if (maxLines - used < 2) flush();
+      const chunk = rest.splice(0, maxLines - used - 1);
+      cur.push(Object.assign({}, g, { name: first ? g.name : g.name + '（続き）', tasks: chunk }));
+      used += 1 + chunk.length;
+      first = false;
+      if (rest.length) flush();
+    }
+  });
+  flush();
+  return pages;
+}
+
+/* ===================== 描画ヘルパー ===================== */
+function setFont(ctx, size, weight) { ctx.font = weight + ' ' + size + 'px ' + FONT; }
+function text(ctx, s, x, y, size, weight, color, align) {
+  setFont(ctx, size, weight);
+  ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(s, x, y);
+}
+/** 白い縁取り付きの文字（本日線などの上でも読めるように） */
+function textHalo(ctx, s, x, y, size, weight, color, align) {
+  setFont(ctx, size, weight);
+  ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = Math.max(3, size * 0.35); ctx.lineJoin = 'round'; ctx.strokeStyle = '#FFFFFF';
+  ctx.strokeText(s, x, y);
+  ctx.fillStyle = color; ctx.fillText(s, x, y);
+}
+function textW(ctx, s, size, weight) { setFont(ctx, size, weight); return ctx.measureText(s).width; }
+function fit(ctx, s, maxW, size, weight) {
+  setFont(ctx, size, weight);
+  if (ctx.measureText(s).width <= maxW) return s;
+  let t = s;
+  while (t.length && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+  return t ? t + '…' : '';
+}
+function hline(ctx, x1, x2, y, color, w) { ctx.fillStyle = color; ctx.fillRect(x1, y - w / 2, x2 - x1, w); }
+function vline(ctx, x, y1, y2, color, w) { ctx.fillStyle = color; ctx.fillRect(x - w / 2, Math.min(y1, y2), w, Math.abs(y2 - y1)); }
+function rrect(ctx, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function diamond(ctx, cx, cy, r, fill) {
+  ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy); ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#FFFFFF'; ctx.stroke();
+}
+function pill(ctx, label, x, cy, size, h) {
+  const w = textW(ctx, label, size, 500) + size * 1.4;
+  rrect(ctx, x, cy - h / 2, w, h, h / 2); ctx.fillStyle = '#F8FAFC'; ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = C.rule; ctx.stroke();
+  text(ctx, label, x + w / 2, cy + 0.5, size, 500, C.sub, 'center');
+  return w;
+}
+
+/* ===================== ガントチャート描画 =====================
+ * o.rowH    : 作業1行の高さ
+ * o.today   : 基準日（yyyy-MM-dd）。空なら本日線・本日の週・現在の工程の強調を出さない
+ * o.sprints : スプリント一覧
+ * o.pageOf / o.preds / o.pageNo : （スライド時）ページ外の依存をタグで表示するための情報
+ */
+function drawGantt(ctx, groups, axis, L, o) {
+  const s = L.s, H = L.H, ROW = o.rowH, GH = Math.round(ROW * 0.76);
+  const barH = Math.min(s(16), ROW * 0.46);
+  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, L.W, H);
+
+  // 行の位置
+  let y = L.bodyY;
+  const items = [];
+  groups.forEach(g => {
+    items.push({ type: 'band', g, y }); y += GH;
+    g.tasks.forEach(t => { items.push({ type: 'row', g, t, y }); y += ROW; });
+  });
+  const bodyEnd = y;
+
+  // 本日
+  const hasToday = !!o.today;
+  const tdDays = hasToday ? diffDays(axis.start, toD(o.today)) : 0;
+  const tdx = L.X0 + tdDays * axis.pxd + axis.pxd / 2;
+  const todayIn = hasToday && tdx >= L.X0 && tdx <= L.XR;
+  const todayWeek = todayIn ? Math.floor(tdDays / 7) : -1;
+
+  // 週の列（縞・本日の週の強調・縦線・日付ラベル）
+  const wW = 7 * axis.pxd;
+  const step = Math.max(1, Math.ceil(s(34) / wW));
+  const wy = (L.weekY + L.lineY) / 2;
+  for (let i = 0; i < axis.weeks; i++) {
+    const x = L.X0 + i * wW;
+    if (i === todayWeek) { ctx.fillStyle = C.todayWeek; ctx.fillRect(x, L.weekY, wW, bodyEnd - L.weekY); }
+    else if (i % 2) { ctx.fillStyle = C.shade; ctx.fillRect(x, L.weekY, wW, bodyEnd - L.weekY); }
+    vline(ctx, x, L.weekY, bodyEnd, C.grid, 1);
+  }
+  vline(ctx, L.XR, L.weekY, bodyEnd, C.grid, 1);
+  // 本日線（見出し部分）：月・日付の行には引かない（本日の週は薄い赤で示す）
+  const todayLW = Math.max(2, s(1.5));
+  if (todayIn) vline(ctx, tdx, L.pillY + L.pillH, L.monthY, C.today, todayLW);
+
+  for (let i = 0; i < axis.weeks; i += step) {   // ラベルは縞の上に描く
+    const x = L.X0 + i * wW;
+    const d = new Date(axis.start); d.setDate(d.getDate() + i * 7);
+    const lab = (d.getMonth() + 1) + '/' + d.getDate();
+    if (step === 1) textHalo(ctx, lab, x + wW / 2, wy, s(10), 400, C.muted, 'center');
+    else textHalo(ctx, lab, x + s(3), wy, s(10), 400, C.muted);
+  }
+
+  // 月の帯
+  let m = new Date(axis.start.getFullYear(), axis.start.getMonth(), 1), labeled = 0;
+  const my = (L.monthY + L.weekY) / 2;
+  while (true) {
+    const nx = new Date(m.getFullYear(), m.getMonth() + 1, 1);
+    const x1 = Math.max(L.X0, L.X0 + diffDays(axis.start, m) * axis.pxd);
+    const x2 = Math.min(L.XR, L.X0 + diffDays(axis.start, nx) * axis.pxd);
+    if (x2 > x1) {
+      vline(ctx, x1, L.monthY, L.weekY, C.rule, 1);
+      const lab = (labeled === 0 || m.getMonth() === 0) ? m.getFullYear() + '年' + (m.getMonth() + 1) + '月' : (m.getMonth() + 1) + '月';
+      if (x2 - x1 >= textW(ctx, lab, s(11), 700) + s(10)) { textHalo(ctx, lab, x1 + s(5), my, s(11), 700, '#334155'); labeled++; }
+    }
+    if (x2 >= L.XR) break;
+    m = nx;
+  }
+
+  // スプリント行（最上段）
+  if (L.sprintH && o.sprints && o.sprints.length) {
+    text(ctx, fit(ctx, o.periodTitle || 'スプリント', L.X0 - L.colId - s(8), s(11), 700), L.colId, L.sprintY + L.laneH / 2, s(11), 700, C.muted);
+    const edges = [];
+    // 段ごとの枠の位置（枠外に名前を出すときの重なり判定用）
+    const boxes = o.sprints.map(sp => ({ lane: sp.lane || 0,
+      x1: Math.max(L.X0, axis.x(sp.s)), x2: Math.min(L.XR, axis.x(sp.e) + axis.pxd) }));
+    const free = (lane, a, b, self) => a >= L.X0 && b <= L.XR &&
+      boxes.every((bx, k) => k === self || bx.lane !== lane || bx.x2 <= a || bx.x1 >= b);
+    o.sprints.forEach((sp, i) => {
+      const x1 = Math.max(L.X0, axis.x(sp.s)), x2 = Math.min(L.XR, axis.x(sp.e) + axis.pxd);
+      if (x2 <= x1) return;
+      const now = hasToday && o.today >= sp.s && o.today <= sp.e;
+      const sy = L.sprintY + (sp.lane || 0) * (L.laneH + L.laneGap), sh = L.laneH, scy = sy + sh / 2;
+      rrect(ctx, x1 + 1, sy, x2 - x1 - 2, sh, s(4));
+      ctx.fillStyle = now ? C.sprintNow : (sp.lane ? '#FDE7C8' : (sp.alt ? C.sprintB : C.sprintA)); ctx.fill();
+      // 入る範囲で「名称（期間）」→「名称」→「表示名」の順に表示
+      const fz = s(10), avail = x2 - x1 - s(8);
+      const short = sp.label || sp.name;
+      const range = sp.s === sp.e ? md(sp.s) : md(sp.s) + '–' + md(sp.e);
+      const cands = [sp.name + '（' + range + '）', sp.name, short];
+      const lab = cands.find(c => textW(ctx, c, fz, 700) <= avail);
+      if (lab) text(ctx, lab, (x1 + x2) / 2, scy + 0.5, fz, 700, now ? '#FFFFFF' : '#334155', 'center');
+      else if (short) {
+        // 枠に入らない短い期間は、枠の右側に名前を出す（右端に収まらなければ左側）
+        const tw = textW(ctx, short, fz, 700), gap = s(4), col = sp.lane ? '#92400E' : '#334155';
+        if (free(sp.lane || 0, x2 + gap, x2 + gap + tw, i)) textHalo(ctx, short, x2 + gap, scy + 0.5, fz, 700, col);
+        else if (free(sp.lane || 0, x1 - gap - tw, x1 - gap, i)) textHalo(ctx, short, x1 - gap, scy + 0.5, fz, 700, col, 'right');
+      }
+      edges.push(x1, x2);
+    });
+    // スプリント境界の点線（本体）
+    ctx.save();
+    ctx.setLineDash([s(3), s(3)]); ctx.lineWidth = 1; ctx.strokeStyle = C.sprintLine;
+    [...new Set(edges.map(Math.round))].forEach(x => {
+      if (x <= L.X0 + 1 || x >= L.XR - 1) return;
+      ctx.beginPath(); ctx.moveTo(x, L.lineY); ctx.lineTo(x, bodyEnd); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // 左の表の見出し
+  text(ctx, 'ID', L.colId, wy, s(11), 700, C.muted);
+  text(ctx, '作業名', L.colName, wy, s(11), 700, C.muted);
+  text(ctx, '担当', L.colWho, wy, s(11), 700, C.muted);
+  text(ctx, '期間', L.colPeriod, wy, s(11), 700, C.muted);
+  if (L.showProg) text(ctx, '進捗', L.progR, wy, s(11), 700, C.muted, 'right');
+  hline(ctx, 16, L.XR, L.lineY, C.rule, 1);
+
+  // 分類の見出し行・作業行
+  const pos = {};
+  items.forEach(it => {
+    if (it.type === 'band') {
+      const g = it.g, cy = it.y + GH / 2;
+      ctx.fillStyle = g.light; ctx.fillRect(16, it.y, L.XR - 16, GH);
+      ctx.beginPath(); ctx.arc(16 + s(10), cy, s(4), 0, Math.PI * 2); ctx.fillStyle = g.color; ctx.fill();
+      text(ctx, fit(ctx, g.name, L.colPeriod - 16 - s(30), s(13), 700), 16 + s(20), cy, s(13), 700, '#0F172A');
+      let ds = g.tasks[0].s, de = g.tasks[0].e;
+      g.tasks.forEach(t => { if (t.s < ds) ds = t.s; if (t.e > de) de = t.e; });
+      text(ctx, ds === de ? md(ds) : md(ds) + '–' + md(de), L.colPeriod, cy, s(10.5), 700, '#334155');
+      const sx = axis.x(ds), ex = axis.x(de) + axis.pxd;
+      ctx.globalAlpha = 0.55; rrect(ctx, sx, cy - s(2), Math.max(4, ex - sx), s(4), s(2)); ctx.fillStyle = g.color; ctx.fill(); ctx.globalAlpha = 1;
+      return;
+    }
+    const t = it.t, cy = it.y + ROW / 2;
+    hline(ctx, 16, L.XR, it.y + ROW - 0.5, C.grid, 1);
+    text(ctx, t.id, L.colId, cy, s(11), 400, C.muted);
+    const nw = t.ms ? 700 : 400;
+    text(ctx, fit(ctx, t.name, L.nameW, s(12.5), nw), L.colName, cy, s(12.5), nw, C.text);
+    if (t.who) text(ctx, fit(ctx, t.who, L.whoW, s(11), 400), L.colWho, cy, s(11), 400, '#334155');
+    text(ctx, t.ms ? md(t.s) : md(t.s) + '–' + md(t.e), L.colPeriod, cy, s(10.5), 400, C.sub);
+    let pg = '', pc = C.sub, pw = 400;
+    if (t.ms) { pg = t.prog >= 100 ? '達成' : '—'; }
+    else if (t.prog !== null && t.prog !== undefined) { pg = t.prog >= 100 ? '完了' : t.prog + '%'; }
+    if (t.prog >= 100) { pc = C.done; pw = 700; }
+    if (pg && L.showProg) text(ctx, pg, L.progR, cy, s(10.5), pw, pc, 'right');
+
+    if (t.ms) {
+      const cx = axis.x(t.e) + axis.pxd, r = barH * 0.6;
+      pos[t.id] = { ms: true, cx, cy, r, x: cx - r - 1, end: cx + r + 1, color: it.g.color };
+    } else {
+      const x = axis.x(t.s), w = Math.max(3, (diffDays(toD(t.s), toD(t.e)) + 1) * axis.pxd);
+      // 進捗を表示しない場合はバーをすべて塗りつぶす（100%と同じ）
+      pos[t.id] = { ms: false, x, end: x + w, w, cy, color: it.g.color, light: it.g.light, prog: L.showProg ? t.prog : null };
+    }
+  });
+
+  // 依存関係（カギ線＋矢印）
+  const route = (a, b) => {
+    const tx = b.x, ty = b.cy;
+    if (tx - a.end >= 12) { const xm = a.end + 6; return [[a.end, a.cy], [xm, a.cy], [xm, ty], [tx, ty]]; }
+    const dir = ty > a.cy ? 1 : -1;
+    const dropX = a.ms ? a.cx : Math.max(a.x + 3, a.end - 6);
+    if (tx - dropX >= 8) return [[dropX, a.cy + dir * (a.ms ? a.r + 1 : barH / 2)], [dropX, ty], [tx, ty]];
+    const xs = a.end + 6, ym = ty - dir * (ROW / 2);
+    return [[a.end, a.cy], [xs, a.cy], [xs, ym], [tx - 10, ym], [tx - 10, ty], [tx, ty]];
+  };
+  const drawRoute = pts => {
+    const ah = Math.max(7, s(5));
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length - 1; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last[0] - ah + 1, last[1]);
+    ctx.lineWidth = Math.max(1.5, s(1.2)); ctx.strokeStyle = C.link; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(last[0] - ah, last[1] - ah * 0.6); ctx.lineTo(last[0] - ah, last[1] + ah * 0.6); ctx.closePath();
+    ctx.fillStyle = C.link; ctx.fill();
+  };
+  const outTags = [], inTags = [];
+  groups.forEach(g => g.tasks.forEach(t => {
+    const a = pos[t.id];
+    t.next.forEach(n => {
+      const b = pos[n];
+      if (b) { drawRoute(route(a, b)); return; }
+      const where = o.pageOf ? (o.pageOf[n] > o.pageNo ? '（次頁）' : '（前頁）') : '';
+      outTags.push({ a, label: '→ ' + n + where });
+    });
+  }));
+  if (o.preds) {
+    groups.forEach(g => g.tasks.forEach(t => {
+      (o.preds[t.id] || []).forEach(p => {
+        if (pos[p]) return;
+        inTags.push({ b: pos[t.id], label: p + (o.pageOf[p] < o.pageNo ? '（前頁）' : '（次頁）') + ' →' });
+      });
+    }));
+  }
+
+  // バー（薄い色＝全期間、濃い色＝進捗）・マイルストーン
+  Object.keys(pos).forEach(id => {
+    const p = pos[id];
+    if (p.ms) { diamond(ctx, p.cx, p.cy, p.r, p.color); return; }
+    const by = p.cy - barH / 2, rad = Math.min(s(3), barH / 4);
+    if (p.prog === null || p.prog === undefined) {
+      rrect(ctx, p.x, by, p.w, barH, rad); ctx.fillStyle = p.color; ctx.fill();
+    } else {
+      rrect(ctx, p.x, by, p.w, barH, rad); ctx.fillStyle = p.light; ctx.fill();
+      ctx.save(); rrect(ctx, p.x, by, p.w, barH, rad); ctx.clip();
+      ctx.fillStyle = p.color; ctx.fillRect(p.x, by, p.w * p.prog / 100, barH); ctx.restore();
+      rrect(ctx, p.x + 0.5, by + 0.5, p.w - 1, barH - 1, rad); ctx.lineWidth = 1; ctx.strokeStyle = p.color; ctx.stroke();
+    }
+  });
+
+  // ページをまたぐ依存のタグ
+  const tagSize = s(9.5), tagH = s(18);
+  const outX = {};
+  outTags.forEach(tg => {
+    const x = outX[tg.a.cy] || (tg.a.end + 6);
+    outX[tg.a.cy] = x + pill(ctx, tg.label, x, tg.a.cy, tagSize, tagH) + 4;
+  });
+  inTags.forEach(tg => {
+    const w = textW(ctx, tg.label, tagSize, 500) + tagSize * 1.4;
+    pill(ctx, tg.label, Math.max(L.X0 + 2, tg.b.x - 6 - w), tg.b.cy, tagSize, tagH);
+  });
+
+  // 本日線（本体部分）とラベル
+  if (todayIn) {
+    vline(ctx, tdx, L.lineY, bodyEnd, C.today, todayLW);
+    const lab = '本日 ' + md(o.today);
+    const w = textW(ctx, lab, s(10.5), 700) + s(18);
+    const px = Math.min(Math.max(tdx - w / 2, L.X0), L.XR - w);
+    rrect(ctx, px, L.pillY, w, L.pillH, L.pillH / 2); ctx.fillStyle = C.today; ctx.fill();
+    text(ctx, lab, px + w / 2, L.pillY + L.pillH / 2 + 0.5, s(10.5), 700, '#FFFFFF', 'center');
+  }
+
+  // 凡例
+  const ly = H - L.legendH / 2;
+  hline(ctx, 16, L.XR, H - L.legendH + s(4), '#E2E8F0', 1);
+  const fz = s(11);
+  let lx = 16;
+  rrect(ctx, lx, ly - s(5), s(26), s(10), s(2)); ctx.fillStyle = L.showProg ? '#E2E8F0' : '#64748B'; ctx.fill();
+  if (L.showProg) { ctx.fillStyle = '#64748B'; ctx.fillRect(lx, ly - s(5), s(15), s(10)); }
+  lx += s(32);
+  const legend = (label) => { text(ctx, label, lx, ly, fz, 400, C.sub); lx += textW(ctx, label, fz, 400) + s(24); };
+  legend(L.showProg ? '作業（濃い部分＝進捗）' : '作業');
+  diamond(ctx, lx + s(6), ly, s(6), '#64748B'); lx += s(18); legend('マイルストーン');
+  drawRoute([[lx, ly], [lx + s(26), ly]]); lx += s(32); legend('依存関係（後続作業）');
+  if (hasToday) { vline(ctx, lx + 1, ly - s(7), ly + s(7), C.today, 2); lx += s(8); legend('本日'); }
+  if (L.sprintH && hasToday) {
+    rrect(ctx, lx, ly - s(6), s(22), s(12), s(3)); ctx.fillStyle = C.sprintNow; ctx.fill(); lx += s(28); legend('現在の工程');
+  }
+  return bodyEnd;
+}
+
+function makeCanvas(W, H, scale) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+  const ctx = c.getContext('2d'); ctx.scale(scale, scale);
+  return { c, ctx };
+}
+
+/* ===================== 画面表示（等倍＋横スクロール） ===================== */
+function hasSprints() { return PERIODS.length > 0; }
+function laneCount() { return PERIODS.reduce((a, p) => Math.max(a, p.lane + 1), 0); }
+
+/** 重なる期間は別の段に積む（最大3段） */
+function assignLanes(periods) {
+  const ends = [], counts = [];
+  periods.forEach(p => {
+    let lane = ends.findIndex(e => e < p.s);
+    if (lane < 0) { lane = ends.length < 3 ? ends.length : ends.length - 1; }
+    ends[lane] = p.e > (ends[lane] || '') ? p.e : ends[lane];
+    p.lane = lane;
+    counts[lane] = (counts[lane] || 0) + 1;
+    p.alt = counts[lane] % 2 === 0;
+  });
+  return periods;
+}
+
+/** 表示範囲（最初〜最後の週）に重なる期間だけを残す */
+function visiblePeriods() {
+  if (!RANGE || !DATA.sprints) return [];
+  const end = new Date(RANGE.start); end.setDate(end.getDate() + RANGE.weeks * 7 - 1);
+  const rs = RANGE.start, re = end;
+  return assignLanes(DATA.sprints.filter(p => toD(p.e) >= rs && toD(p.s) <= re).map(p => Object.assign({}, p)));
+}
+
+function renderAll(scale) {
+  const fs = viewFs, s = v => v * fs;
+  const probe = makeLayout(fs, 1360, 0, laneCount(), !DATA.settings.today, DATA.settings.showProgress === false);
+  const W = Math.max(1200, Math.ceil(probe.X0 + RANGE.weeks * s(38) + 16));
+  const rowH = Math.round(s(34)), gh = Math.round(rowH * 0.76);
+  const body = GROUPS.reduce((a, g) => a + gh + g.tasks.length * rowH, 0);
+  const H = Math.ceil(probe.bodyY + body + probe.legendH + s(6));
+  const L = makeLayout(fs, W, H, laneCount(), !DATA.settings.today, DATA.settings.showProgress === false);
+  const { c, ctx } = makeCanvas(W, H, scale);
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  drawGantt(ctx, GROUPS, makeAxis(RANGE, L), L, { rowH, today: DATA.settings.today, sprints: PERIODS, periodTitle: DATA.settings.periodTitle });
+
+  // 固定表示：左の表（進捗列まで）・見出し（本日〜日付の行）・左上の角を切り出して重ねる
+  const fw = Math.ceil(L.X0 - L.s(4));     // 列固定の幅
+  const hh = Math.ceil(L.lineY + 1);       // 見出しの高さ
+  const stack = document.createElement('div'); stack.className = 'stack';
+  stack.appendChild(c);
+  stack.appendChild(cropCanvas(c, 0, 0, fw, H, scale, 'frozen'));
+  stack.appendChild(cropCanvas(c, 0, 0, W, hh, scale, 'head'));
+  stack.appendChild(cropCanvas(c, 0, 0, fw, hh, scale, 'corner'));
+  return { node: stack, canvas: c };
+}
+
+/** キャンバスの一部を切り出す（論理px指定） */
+function cropCanvas(src, x, y, w, h, scale, cls) {
+  const f = document.createElement('canvas');
+  f.width = Math.round(w * scale); f.height = Math.round(h * scale);
+  f.getContext('2d').drawImage(src, Math.round(x * scale), Math.round(y * scale), f.width, f.height, 0, 0, f.width, f.height);
+  f.className = cls; f.setAttribute('aria-hidden', 'true');
+  f.style.width = w + 'px'; f.style.height = h + 'px';
+  return f;
+}
+
+/** 表示枠を画面の高さに合わせる（枠の中で縦横にスクロールし、見出しと左の表を固定） */
+function fitSheetHeight() {
+  document.querySelectorAll('.sheet.scroll').forEach(el => {
+    el.style.maxHeight = Math.max(240, window.innerHeight - el.getBoundingClientRect().top - window.scrollY - 16) + 'px';
+  });
+}
+window.addEventListener('resize', fitSheetHeight);
+
+/* ===================== スライド用ページ ===================== */
+function getPages() {
+  const pages = paginate(GROUPS, DATA.settings.rowsPerPage);
+  const pageOf = {}, preds = {};
+  pages.forEach((p, i) => p.forEach(g => g.tasks.forEach(t => { pageOf[t.id] = i; })));
+  DATA.tasks.forEach(t => t.next.forEach(n => { (preds[n] = preds[n] || []).push(t.id); }));
+  return { pages, pageOf, preds };
+}
+
+/** ページの行数に合わせて行の高さを決め、下の余白を詰める */
+function renderSlidePage(info, i, scale) {
+  const L = makeLayout(SLIDE.fs, SLIDE.W, SLIDE.H, laneCount(), !DATA.settings.today, DATA.settings.showProgress === false);
+  const groups = info.pages[i];
+  const units = groups.reduce((a, g) => a + 0.76 + g.tasks.length, 0);
+  const avail = SLIDE.H - L.bodyY - L.legendH - L.s(4);
+  const rowH = Math.floor(Math.min(L.s(40), avail / units));
+  const { c, ctx } = makeCanvas(SLIDE.W, SLIDE.H, scale);
+  drawGantt(ctx, groups, makeAxis(RANGE, L), L, {
+    rowH, today: DATA.settings.today, sprints: PERIODS, periodTitle: DATA.settings.periodTitle,
+    pageOf: info.pageOf, preds: info.preds, pageNo: i
+  });
+  return c;
+}
+
+function render() {
+  const view = document.getElementById('view');
+  view.innerHTML = '';
+  if (!DATA || !DATA.tasks.length) {
+    view.innerHTML = '<div class="sheet empty">表示できるタスクがありません。「タスク」シートを確認してください。</div>';
+    return;
+  }
+  const scale = Math.max(2, window.devicePixelRatio || 1);
+  if (mode === 'all') {
+    const box = document.createElement('div'); box.className = 'sheet scroll';
+    const r = renderAll(scale);
+    r.canvas.setAttribute('role', 'img'); r.canvas.setAttribute('aria-label', 'ガントチャート（全体）');
+    box.appendChild(r.node); view.appendChild(box);
+    fitSheetHeight();
+  } else {
+    const info = getPages();
+    info.pages.forEach((_, i) => {
+      const box = document.createElement('div'); box.className = 'sheet fit';
+      const lab = document.createElement('p'); lab.className = 'pageLabel'; lab.textContent = 'スライド ' + (i + 1) + '枚目';
+      const c = renderSlidePage(info, i, scale);
+      c.setAttribute('role', 'img'); c.setAttribute('aria-label', 'ガントチャート スライド' + (i + 1) + '枚目');
+      box.appendChild(lab); box.appendChild(c); view.appendChild(box);
+    });
+  }
+}
+
+/* ===================== サーバー呼び出し ===================== */
+const run = (fn, ...args) => new Promise((resolve, reject) =>
+  google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args));
+
+function setStatus(html, isErr) {
+  const el = document.getElementById('status');
+  if (!html) { el.hidden = true; return; }
+  el.hidden = false; el.className = 'status' + (isErr ? ' err' : ''); el.innerHTML = html;
+}
+const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+async function ensureFonts() {
+  if (!document.fonts || !document.fonts.load) return;
+  const sample = '0123456789/%–→…（）年月本日次頁前続作業名担当期間進捗完了達成依存関係後続濃い部分マイルストーン現在の工程スプリント' +
+    DATA.tasks.map(t => t.name + t.who + t.group + t.id).join('') + (DATA.sprints || []).map(x => x.name + x.label).join('') + (DATA.settings.periodTitle || '');
+  try { await Promise.all(['400', '500', '700'].map(w => document.fonts.load(w + ' 12px "Noto Sans JP"', sample))); } catch (e) { /* 代替フォントで描画 */ }
+}
+
+async function load() {
+  setStatus('スプレッドシートを読み込んでいます…');
+  document.getElementById('export').disabled = true;
+  try {
+    DATA = await run('getGanttData');
+    const s = DATA.settings;
+    document.getElementById('pj').textContent = s.project + '　全体スケジュール';
+    document.getElementById('conf').textContent = s.confidential || '';
+    document.getElementById('base').textContent = s.today ? '基準日：' + jpDate(s.today) : '';
+    const warn = document.getElementById('warn');
+    warn.innerHTML = DATA.warnings.map(w => '<li>' + esc(w) + '</li>').join('');
+    warn.hidden = !DATA.warnings.length;
+    if (DATA.tasks.length) {
+      GROUPS = buildGroups(DATA.tasks);
+      RANGE = buildRange(DATA.tasks);
+      PERIODS = visiblePeriods();
+      await ensureFonts();
+    }
+    render();
+    setStatus('');
+    document.getElementById('export').disabled = !DATA.tasks.length;
+  } catch (err) {
+    setStatus('読み込みに失敗しました：' + esc(err.message || err), true);
+  }
+}
+
+async function exportSlides() {
+  const btn = document.getElementById('export');
+  btn.disabled = true;
+  try {
+    const s = DATA.settings;
+    const info = getPages();
+    const n = info.pages.length;
+    setStatus('Googleスライドを作成しています…');
+    const presId = await run('startExport', s.project + '_スケジュール_' + fileDate(s.today));
+    for (let i = 0; i < n; i++) {
+      setStatus('スライドを出力しています（' + (i + 1) + ' / ' + n + '枚）…');
+      const b64 = renderSlidePage(info, i, SLIDE.scale).toDataURL('image/png').split(',')[1];
+      let notes = info.pages[i].flatMap(g => g.tasks)
+        .filter(t => t.detail)
+        .map(t => '【' + t.id + '】' + t.name + '：' + t.detail);
+      if (i === 0 && hasSprints()) {
+        const sp = PERIODS.filter(x => x.goal).map(x => '・' + x.name + '（' + md(x.s) + '–' + md(x.e) + '）：' + x.goal);
+        if (sp.length) notes = notes.concat(['', '■' + (s.periodTitle || 'スプリント') + 'のメモ'], sp);
+      }
+      await run('addSlidePage', presId, b64, {
+        title: s.project + '　全体スケジュール',
+        baseDate: s.today ? '基準日：' + jpDate(s.today) : '',
+        confidential: s.confidential || '',
+        company: s.company || '',
+        notes: notes.join('\n'),
+        imgW: SLIDE.W, imgH: SLIDE.H
+      });
+    }
+    const url = await run('finishExport', presId);
+    setStatus('スライドを作成しました（' + n + '枚）：<a href="' + esc(url) + '" target="_blank" rel="noopener">スライドを開く</a>');
+  } catch (err) {
+    setStatus('スライド出力に失敗しました：' + esc(err.message || err), true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ===================== イベント ===================== */
+function setMode(m) {
+  mode = m;
+  document.getElementById('tabAll').setAttribute('aria-pressed', String(m === 'all'));
+  document.getElementById('tabPages').setAttribute('aria-pressed', String(m === 'pages'));
+  render();
+}
+document.getElementById('tabAll').addEventListener('click', () => setMode('all'));
+document.getElementById('tabPages').addEventListener('click', () => setMode('pages'));
+document.querySelectorAll('[data-fs]').forEach(b => b.addEventListener('click', () => {
+  viewFs = Number(b.dataset.fs);
+  document.querySelectorAll('[data-fs]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  if (DATA) render();
+}));
+document.getElementById('reload').addEventListener('click', load);
+// ダイアログのときだけ「別タブで開く」を表示（Webアプリはすでにブラウザのタブ）
+if (CONTEXT === 'dialog') {
+  const ob = document.getElementById('openTab');
+  ob.hidden = false;
+  ob.addEventListener('click', openSnapshotTab);
+}
+
+/**
+ * 表示中のガントチャート（全体表示・選択中の文字サイズ）を新しいタブに描画する。
+ * WebアプリのURLを使わないので、ログイン中のアカウントやデプロイ状態に左右されない。
+ */
+function openSnapshotTab() {
+  if (!DATA || !DATA.tasks.length) return;
+  const win = window.open('', '_blank');
+  if (!win) { setStatus('ポップアップがブロックされました。ブラウザのアドレスバー右端のアイコンから、ポップアップを許可してください。', true); return; }
+
+  // 4つの文字サイズ分を描いておき、別タブ側のボタンで切り替える
+  const SIZES = [['小', 0.85], ['標準', 1], ['大', 1.2], ['特大', 1.4]];
+  const keep = viewFs;
+  const views = SIZES.map(([label, fs]) => {
+    viewFs = fs;
+    const r = renderAll(2);
+    const c = r.canvas, img = cls => {
+      const k = r.node.querySelector('.' + cls);
+      return '<img class="' + cls + '" alt="" src="' + k.toDataURL('image/png') + '" style="width:' + k.style.width + ';height:' + k.style.height + '">';
+    };
+    return '<div class="stack" data-fs="' + fs + '"' + (fs === 1 ? '' : ' hidden') + '>' +
+      '<img alt="ガントチャート（全体・文字' + label + '）" src="' + c.toDataURL('image/png') + '" style="width:' + c.style.width + ';height:' + c.style.height + '">' +
+      img('frozen') + img('head') + img('corner') +
+      '</div>';
+  });
+  viewFs = keep;
+
+  const s = DATA.settings;
+  const now = new Date();
+  const stamp = now.getFullYear() + '/' + (now.getMonth() + 1) + '/' + now.getDate() + ' ' +
+    String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const buttons = SIZES.map(([label, fs]) =>
+    '<button data-fs="' + fs + '" aria-pressed="' + (fs === 1) + '">' + label + '</button>').join('');
+  const html = '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>' + esc(s.project) + '　全体スケジュール</title><style>' +
+    'body{margin:0;background:#F1F5F9;color:#1F2937;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif}' +
+    'header{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-end;padding:12px 20px;background:#fff;border-bottom:1px solid #E2E8F0}' +
+    'h1{margin:0;font-size:19px;color:#0F172A}.conf{font-size:11px;font-weight:700;color:#B91C1C;margin-top:2px}' +
+    '.right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}' +
+    '.base{font-size:13px;color:#334155;text-align:right}.base small{display:block;font-size:11px;color:#64748B}' +
+    '.seg{display:inline-flex;border:1px solid #CBD5E1;border-radius:8px;overflow:hidden}' +
+    '.seg span{display:flex;align-items:center;padding:0 10px;font-size:12px;color:#64748B;background:#F8FAFC;border-right:1px solid #CBD5E1}' +
+    '.seg button{font:inherit;font-size:13px;border:0;padding:8px 14px;min-height:38px;background:#fff;color:#334155;cursor:pointer}' +
+    '.seg button:hover{background:#F8FAFC}.seg button[aria-pressed="true"]{background:#1E293B;color:#fff}' +
+    'main{padding:16px 20px 24px}.sheet{background:#fff;border-radius:10px;box-shadow:0 0 0 1px #E2E8F0;overflow-x:auto}' +
+    '.stack{display:grid}.stack[hidden]{display:none}.stack>img{grid-area:1/1;display:block}' +
+    '.frozen{position:sticky;left:0;z-index:1;align-self:start;box-shadow:6px 0 6px -4px rgba(15,23,42,.18)}' +
+    '.head{position:sticky;top:0;z-index:2;align-self:start;box-shadow:0 6px 6px -4px rgba(15,23,42,.18)}' +
+    '.corner{position:sticky;top:0;left:0;z-index:3;align-self:start}' +
+    '</style></head><body><header><div><h1>' + esc(s.project) + '　全体スケジュール</h1>' +
+    '<div class="conf">' + esc(s.confidential || '') + '</div></div>' +
+    '<div class="right"><div class="base">' + (s.today ? '基準日：' + esc(jpDate(s.today)) : '') +
+    '<small>' + esc(stamp) + ' 時点の内容です（最新にするにはスプレッドシートから開き直してください）</small></div>' +
+    '<div class="seg" role="group" aria-label="文字サイズ"><span>文字</span>' + buttons + '</div></div></header>' +
+    '<main><div class="sheet" id="sheet">' + views.join('') + '</div></main>' +
+    '<script>(function(){var sheet=document.getElementById("sheet");' +
+    'function fit(){sheet.style.maxHeight=Math.max(240,window.innerHeight-sheet.getBoundingClientRect().top-window.scrollY-16)+"px";}' +
+    'fit();window.addEventListener("resize",fit);' +
+    'document.querySelectorAll("button[data-fs]").forEach(function(b){b.addEventListener("click",function(){' +
+    'var ratio=sheet.scrollWidth>sheet.clientWidth?sheet.scrollLeft/(sheet.scrollWidth-sheet.clientWidth):0;' +
+    'document.querySelectorAll("button[data-fs]").forEach(function(x){x.setAttribute("aria-pressed",String(x===b));});' +
+    'document.querySelectorAll(".stack").forEach(function(v){v.hidden=v.getAttribute("data-fs")!==b.getAttribute("data-fs");});' +
+    'sheet.scrollLeft=ratio*(sheet.scrollWidth-sheet.clientWidth);});});})();<\/script>' +
+    '</body></html>';
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+document.getElementById('export').addEventListener('click', exportSlides);
+document.getElementById('ver').textContent = 'ver. ' + APP_VERSION;
+load();
+</script>
+</body>
+</html>
